@@ -560,8 +560,14 @@
                 <span id='disp_return'>获得</span>
                 牌数：
             </span>
-            <input type="range" id="sl_count" min=0 max=5 value=1 onchange="UpdateOpUI()">
-            <span id='disp_cards_count'>1</span>
+            <select id="sl_count" onchange="UpdateOpUI()">
+                <option value="0">0</option>
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+            </select>
             <select id="sl_return" onchange="UpdateOpUI()"></select>
         </div>
         <div>
@@ -595,7 +601,6 @@
             AREA_GIVE = document.getElementById('area_give')
             DISP_GIVE = document.getElementById('disp_give')
             DISP_RETURN = document.getElementById('disp_return')
-            DISP_CARDS_COUNT = document.getElementById('disp_cards_count')
             DISP_MY_CARDS = document.getElementById('disp_my_cards')
             DISP_POSSIB_COUNT = document.getElementById('disp_possib_count')
             DISP_PREDICT = document.getElementById('disp_predict')
@@ -670,11 +675,12 @@
                 ValidateSelect(SL_OPS.to, v => v < PLAYER_COUNT && v != OPS.from)
                 ValidateSelect(SL_OPS.give, v => OPS.types.indexOf(v) >= 0)
                 ValidateSelect(SL_OPS.return, v => OPS.types.indexOf(v) >= 0)
-                SL_OPS.count.max = (
-                    OPS.action == 'loot_pair' ? 2 :
+
+                // 最大计数
+                var max_count =
+                    (OPS.action == 'loot_pair') ? 2 :
                         Math.max(...Array.from(OPS.types).map(x => MAX_COUNTS[x]))
-                )
-                DISP_CARDS_COUNT.innerText = OPS.count
+                ValidateSelect(SL_OPS.count, v => v <= max_count)
 
                 // 颜色可见性
                 var about_me = (OPS.from == '0' || OPS.to == '0')
