@@ -1,0 +1,710 @@
+<html>
+
+<head>
+    <title>本草计算器</title>
+    <style>
+        * {
+            font-size: 4vh;
+        }
+
+        pre {
+            margin: 0;
+            font-family: inherit;
+        }
+
+        div {
+            width: 100%;
+        }
+
+        body {
+            overflow-x: hidden;
+            background-color: black;
+        }
+
+        .container {
+            position: absolute;
+            left: 0;
+            top: 0;
+            width: calc(100vw - 20px);
+            min-height: calc(100vh - 20px);
+            padding: 10px;
+        }
+
+        #init_mask {
+            background-color: rgb(200, 230, 250);
+            z-index: 2;
+        }
+
+        #main {
+            background-color: rgb(200, 250, 230);
+        }
+
+        .hidden {
+            display: none;
+        }
+
+        .r,
+        .g,
+        .b,
+        .y,
+        .u {
+            width: 4vh;
+            height: 4vh;
+            display: inline-block;
+            margin: auto 2px;
+            border-radius: 1vh;
+            transform: translate(0, 0.5vh);
+            border: 1px solid black;
+        }
+
+        .r {
+            background-color: red;
+        }
+
+        .g {
+            background-color: green;
+        }
+
+        .b {
+            background-color: blue;
+        }
+
+        .y {
+            background-color: yellow;
+        }
+    </style>
+    <!-- 卡堆 -->
+    <script>
+        function SetActive(node, active) {
+            node.classList[active ? 'remove' : 'add']('hidden')
+        }
+
+        function ValidateSelect(node, judge_func) {
+            var first_valid = null
+
+            // 选项
+            for (var opt of node.querySelectorAll('option')) {
+                var opt_valid = judge_func(opt.value)
+                SetActive(opt, opt_valid)
+                if (opt_valid && first_valid == null)
+                    first_valid = opt.value
+            }
+
+            // 当前值
+            if (!judge_func(node.value))
+                node.value = first_valid
+        }
+
+        COLOR_DISP = '红黄绿蓝'
+        COLORS = 'rygb'
+        class CardPile {
+            constructor(r, y, g, b, weight) {
+                Object.assign(this, {
+                    r: r * 1,
+                    y: y * 1,
+                    g: g * 1,
+                    b: b * 1,
+                    weight: weight || 1,
+                })
+            }
+
+            hasMax(k) {
+                return this[k] >= MAX_COUNTS[k]
+            }
+
+            toString() {
+                var res = [0, 1, 2, 3]
+                    .filter(i => (this[COLORS[i]] > 0))
+                    .map(i => this[COLORS[i]] + '' + COLOR_DISP[i])
+                    .join('; ')
+                if (this.weight != 1)
+                    res += ` (权重=${this.weight})`
+                return res
+            }
+
+            add(p) {
+                return Cards(this.r + p.r, this.y + p.y, this.g + p.g, this.b + p.b, this.weight / p.weight)
+            }
+
+            minus(p) {
+                return Cards(this.r - p.r, this.y - p.y, this.g - p.g, this.b - p.b, this.weight * p.weight)
+            }
+        }
+        Object.defineProperties(CardPile.prototype, {
+            key: {
+                get: function () {
+                    return [this.r, this.y, this.g, this.b].join(':')
+                }
+            },
+            HTML: {
+                get: function () {
+                    var res = ''
+                    for (var c of COLORS)
+                        for (var i = this[c]; i > 0; i--) {
+                            res += `<span class='${c}'></span>`
+                        }
+                    return res
+                }
+            },
+            total: {
+                get: function () {
+                    return this.r + this.b + this.y + this.g
+                }
+            }
+        })
+
+        function Cards(r = 0, y = 0, g = 0, b = 0, weight = 1) {
+            if (r instanceof CardPile)
+                return new CardPile(r.r, r.y, r.g, r.b, r.weight)
+
+            return new CardPile(r, y, g, b, weight)
+        }
+    </script>
+    <!-- 生成搜索空间相关 -->
+    <script>
+        function AWeight(m, n) {
+            var res = 1
+            for (var i = 0; i < n; i++)
+                res *= (m - i)
+            return res
+        }
+
+        function* PossibPile(pile, count) {
+            for (var r = 0; r <= pile.r; r++) {
+                for (var y = 0; y <= pile.y; y++) {
+                    for (var g = 0; g <= pile.g; g++) {
+                        b = count - r - y - g
+                        if (b < 0 || b > pile.b) continue
+                        new_pile = Cards(r, y, g, b)
+                        // 选牌权重？
+                        for (var k of COLORS)
+                            new_pile.weight *= AWeight(pile[k], new_pile[k])
+                        // 排列权重？
+                        var w1 = AWeight(CARD_COUNT, CARD_COUNT)
+                        for (var k of COLORS)
+                            w1 /= AWeight(new_pile[k], new_pile[k])
+                        new_pile.weight *= w1
+                        yield new_pile
+                    }
+                }
+            }
+        }
+
+        function GenPossib(pile, idx, stack, dump) {
+            if (idx >= PLAYER_COUNT) {
+                var res = stack.map(Cards)
+                res.push(Cards(pile))
+                dump.push(res)
+                return
+            }
+
+            for (var plr_hand of PossibPile(pile, CARD_COUNT)) {
+                stack.push(plr_hand)
+                GenPossib(pile.minus(plr_hand), idx + 1, stack, dump)
+                stack.pop()
+            }
+        }
+
+        function InitSpace() {
+        }
+    </script>
+    <!-- 筛选相关 -->
+    <script>
+        class ActionBase {
+            constructor(color1, color2, count) {
+                Object.assign(this, {
+                    color1: color1,
+                    color2: color2,
+                    count: count * 1,
+                })
+            }
+            validPlr1(cards) { return true }
+            validPlr2(cards) { return true }
+            execPlr1(cards) { return Cards(cards) }
+            execPlr2(cards) { return Cards(cards) }
+        }
+        class ActionAsk extends ActionBase { // 给出color1，确认count个color2
+            validPlr1(cards) {
+                return cards[this.color1] > 0
+            }
+            validPlr2(cards) {
+                return cards[this.color2] == this.count
+            }
+            execPlr1(cards) {
+                var res = Cards(cards)
+                res[this.color1]--
+                return res
+            }
+            execPlr2(cards) {
+                var res = Cards(cards)
+                res[this.color1]++
+                return res
+            }
+        }
+        class ActionExchange extends ActionAsk { // 给出color1，换count个color2
+            execPlr1(cards) {
+                var res = Cards(cards)
+                res[this.color1]--
+                res[this.color2] += this.count
+                return res
+            }
+            execPlr2(cards) {
+                var res = Cards(cards)
+                res[this.color1]++
+                res[this.color2] = 0
+                return res
+            }
+        }
+        class ActionLootPair extends ActionBase { // 拿取color2，再拿color1
+            validPlr2(cards) {
+                var hasColor1 = cards[this.color1] > 0
+                var hasColor2 = cards[this.color2] > 0
+                if (!hasColor2 && hasColor1) return false
+                return hasColor1 + hasColor2 == this.count
+            }
+            execPlr1(cards) {
+                var res = Cards(cards)
+                if (this.count > 0) {
+                    res[this.color2]++
+                    if (this.count > 1) res[this.color1]++
+                }
+                return res
+            }
+            execPlr2(cards) {
+                var res = Cards(cards)
+                if (this.count > 0) {
+                    res[this.color2]--
+                    if (this.count > 1) res[this.color1]--
+                }
+                return res
+            }
+        }
+        class ActionLootType extends ActionBase { // 拿取count个color2
+            validPlr2(cards) {
+                return cards[this.color2] == this.count
+            }
+            execPlr1(cards) {
+                var res = Cards(cards)
+                res[this.color2] += this.count
+                return res
+            }
+            execPlr2(cards) {
+                var res = Cards(cards)
+                res[this.color2] = 0
+                return res
+            }
+        }
+
+        function Actions(action, types, count) {
+            var actionCls, noSwap = false
+            switch (action) {
+                default:
+                case 'ask':
+                    actionCls = ActionAsk
+                    break
+                case 'loot_type':
+                    actionCls = ActionLootType
+                    noSwap = count == 0
+                    break
+                case 'loot_pair':
+                    actionCls = ActionLootPair
+                    noSwap = count != 1
+                    break
+                case 'exchange':
+                    actionCls = ActionExchange
+                    break
+            }
+            var res = [new actionCls(...types, count)]
+            if (!noSwap) res.push(new actionCls(types[1], types[0], count))
+            return res
+        }
+
+        function GenValidActions(from, to, action, types, count, color1 = null, color2 = null) {
+            var res = []
+            for (var actionObj of Actions(action, types, count)) {
+                // 玩家手牌验证
+                if (from == 0 && !actionObj.validPlr1(HAND_CARDS)) continue
+                if (to == 0 && !actionObj.validPlr2(HAND_CARDS)) continue
+                // 特定颜色验证
+                if (color1 != null && actionObj.color1 != color1) continue
+                if (color2 != null && actionObj.color2 != color2) continue
+
+                res.push(actionObj)
+            }
+            return res
+        }
+
+        function* FilterWithAction(action, from, to, possibs) {
+            for (var piles of possibs) {
+                if (from != 0 && !action.validPlr1(piles[from - 1])) continue
+                if (to != 0 && !action.validPlr2(piles[to - 1])) continue
+
+                // 执行
+                new_piles = piles.map(Cards)
+                if (from != 0) new_piles[from - 1] = action.execPlr1(new_piles[from - 1])
+                if (to != 0) new_piles[to - 1] = action.execPlr2(new_piles[to - 1])
+                yield new_piles
+            }
+        }
+
+        function PossibWithActions(actions, from, to, possibs) {
+            var uniqKeyPool = {},
+                res = [],
+                oldPile
+            for (var action of actions) {
+                for (var pile of FilterWithAction(action, from, to, possibs)) {
+                    var key = pile.map(x => x.key).join('|')
+                    if (oldPile = uniqKeyPool[key]) // 叠加权重
+                        oldPile[oldPile.length - 1].weight += pile.pop().weight
+                    else
+                        res.push(uniqKeyPool[key] = pile)
+                }
+            }
+            return res
+        }
+    </script>
+    <!-- 结果输出 -->
+    <script>
+        function CardFromKey(key) {
+            if (key.indexOf(':') >= 0)
+                return new CardPile(...key.split(':')).HTML
+            return key
+        }
+
+        function SummaryPossibs(possibs) {
+            if (possibs.length == 0) return '不可能'
+
+            var sum = 0,
+                weights = {}
+            for (var pile of possibs) {
+                var last = pile[pile.length - 1]
+                var key = last.key
+                if (last.r == 2 || last.g == 2 || last.y == 2 || last.b == 2)
+                    key = '纯色'
+                sum += last.weight
+                weights[key] = (weights[key] || 0) + last.weight
+            }
+
+            var sorted = Object.entries(weights).sort((a, b) => {
+                return b[1] - a[1]
+            })
+
+            return sorted.slice(0, 3).map(([key, w]) => {
+                w /= sum
+                return `${CardFromKey(key)} (${Math.round(w * 1000) / 10}%)`
+            }).join('\n')
+        }
+
+        class PlayerPredict {
+            constructor(parent, index) {
+                this.div = document.createElement('div')
+                parent.appendChild(this.div)
+                this.div.innerText = `玩家${index}：`
+                this.index = index
+
+                this.cards = document.createElement('span')
+                this.div.appendChild(this.cards)
+            }
+
+            getContent() {
+                if (ALL_POSSIB.length == 0) return '寄'
+                // 确定牌数
+                var certain_cards = Cards(MAX_COUNTS)
+                for (var piles of ALL_POSSIB) {
+                    var p = piles[this.index - 1]
+                    for (var c of COLORS)
+                        certain_cards[c] = Math.min(certain_cards[c], p[c])
+                }
+                var html = certain_cards.HTML
+                // 不确定牌数
+                var aPile = ALL_POSSIB[0][this.index - 1]
+                html += '<span class="u"></span>'.repeat(aPile.total - certain_cards.total)
+                return html
+            }
+
+            updateContent() {
+                this.cards.innerHTML = this.getContent()
+            }
+        }
+    </script>
+    <!-- 全局变量 -->
+    <script>
+        MAX_COUNTS = Cards(2, 3, 4, 5)
+        CARD_COUNT = 0
+        PLAYER_COUNT = 0
+        HAND_CARDS = Cards()
+        LEFT_CARDS = Cards()
+
+        ALL_POSSIB = []
+        OPS = {}
+
+        CURR_ACTIONS = []
+        UNDO_STACK = []
+    </script>
+</head>
+
+<body>
+    <div id='init_mask' class='container'>
+        <div>
+            <span>人数：</span>
+            <select id="sl_type" onchange="UpdateType()">
+                <option value="4">4人 （每人3手牌）</option>
+                <option value="3">3人 （每人4手牌）</option>
+                <option value="2">2人 （每人6手牌）</option>
+            </select>
+        </div>
+        <br>
+        <div>
+            <span> 初始手牌：</span>
+        </div>
+        <div>
+            <select id="sl_card1" onchange="ValidateHandCard()"></select>
+            <select id="sl_card2" onchange="ValidateHandCard()"></select>
+            <select id="sl_card3" onchange="ValidateHandCard()"></select>
+            <select id="sl_card4" onchange="ValidateHandCard()"></select>
+            <select id="sl_card5" onchange="ValidateHandCard()"></select>
+            <select id="sl_card6" onchange="ValidateHandCard()"></select>
+        </div>
+        <div>
+            <span id='disp_hand_init'></span>
+        </div>
+        <br>
+        <button id='btn_run'>开！</button>
+        <script>
+            INIT_MASK = document.getElementById('init_mask')
+            SL_CARDS = []
+            SL_TYPE = document.getElementById('sl_type')
+            for (var i = 0; i < 6; i++) {
+                var card = document.getElementById('sl_card' + (i + 1))
+                SL_CARDS.push(card)
+                for (var j = 0; j < 4; j++) {
+                    var opt = document.createElement('option')
+                    Object.assign(opt, {
+                        innerText: COLOR_DISP[j],
+                        value: COLORS[j],
+                    })
+                    card.appendChild(opt)
+                }
+            }
+            DISP_HAND_INIT = document.getElementById('disp_hand_init')
+            BTN_RUN = document.getElementById('btn_run')
+
+            function UpdateType() {
+                PLAYER_COUNT = SL_TYPE.value * 1
+                CARD_COUNT = 12 / PLAYER_COUNT
+                for (var i = 0; i < 6; i++) {
+                    SetActive(SL_CARDS[i], i + 1 <= CARD_COUNT)
+                }
+                ValidateHandCard()
+            }
+
+            function ValidateHandCard() {
+                HAND_CARDS = Cards()
+                for (card of SL_CARDS) {
+                    if (card.classList.contains('hidden'))
+                        continue
+
+                    ValidateSelect(card, v => !HAND_CARDS.hasMax(v))
+                    HAND_CARDS[card.value]++
+                }
+
+                DISP_HAND_INIT.innerHTML = HAND_CARDS.HTML
+            }
+
+            UpdateType()
+
+            BTN_RUN.addEventListener('click', () => {
+                SetActive(INIT_MASK, false)
+                LEFT_CARDS = MAX_COUNTS.minus(HAND_CARDS)
+                GenPossib(LEFT_CARDS, 1, [], ALL_POSSIB = [])
+                UpdatePossibDisplays()
+            })
+        </script>
+    </div>
+    <div id='main' class='container'>
+        <button style='position: absolute;right:20px' onclick="location.href=location.href">重开</button>
+        <div>操作：</div>
+        <div>
+            <select id="sl_from" onchange="UpdateOpUI()">
+                <option value="0">我(玩家0)</option>
+                <option value="1">玩家1</option>
+                <option value="2">玩家2</option>
+                <option value="3">玩家3</option>
+            </select>
+            对
+            <select id="sl_to" onchange="UpdateOpUI()">
+                <option value="0">我(玩家0)</option>
+                <option value="1">玩家1</option>
+                <option value="2">玩家2</option>
+                <option value="3">玩家3</option>
+            </select>
+        </div>
+        <div>
+            <select id="sl_action" onchange="UpdateOpUI()">
+                <option value="ask">询问</option>
+                <option value="loot_pair">成对拿</option>
+                <option value="loot_type">成堆拿</option>
+                <option value="exchange">换堆</option>
+            </select>
+            <select id="sl_types" onchange="UpdateOpUI()"></select>
+        </div>
+        <div id='area_give'>
+            <span>
+                <span id='disp_give'>给出</span>
+                手牌：
+            </span>
+            <select id="sl_give" onchange="UpdateOpUI()"></select>
+        </div>
+        <div>
+            <span>
+                <span id='disp_return'>获得</span>
+                牌数：
+            </span>
+            <input type="range" id="sl_count" min=0 max=5 value=1 onchange="UpdateOpUI()">
+            <span id='disp_cards_count'>1</span>
+            <select id="sl_return" onchange="UpdateOpUI()"></select>
+        </div>
+        <div>
+            <button id='btn_update'>更新行动</button>
+            <button id='btn_undo'>撤销</button>
+            <span id='disp_possib_count'></span>种可能性
+        </div>
+        <br>
+        <div>
+            我的手牌：<span id='disp_my_cards'></span>
+        </div>
+        <div>预测结果：</div>
+        <pre id='disp_predict'></pre>
+        <div>预测手牌：</div>
+        <pre id='disp_hands'></pre>
+
+        <script>
+            SL_OPS = Object.fromEntries(
+                ['from', 'to', 'action', 'types', 'give', 'return', 'count']
+                    .map(x => [x, document.getElementById('sl_' + x)])
+            )
+            for (var k in SL_OPS) {
+                (key => {
+                    var node = SL_OPS[key]
+                    Object.defineProperty(OPS, key, {
+                        get: () => node.value,
+                        set: v => node.value = v
+                    })
+                })(k)
+            }
+            AREA_GIVE = document.getElementById('area_give')
+            DISP_GIVE = document.getElementById('disp_give')
+            DISP_RETURN = document.getElementById('disp_return')
+            DISP_CARDS_COUNT = document.getElementById('disp_cards_count')
+            DISP_MY_CARDS = document.getElementById('disp_my_cards')
+            DISP_POSSIB_COUNT = document.getElementById('disp_possib_count')
+            DISP_PREDICT = document.getElementById('disp_predict')
+            DISP_HANDS = document.getElementById('disp_hands')
+            BTN_UPDATE = document.getElementById('btn_update')
+            BTN_UNDO = document.getElementById('btn_undo')
+            PREDICT_HANDS = null
+
+            for (var i = 0; i < 4; i++) {
+                var opt = document.createElement('option')
+                Object.assign(opt, {
+                    value: COLORS[i],
+                    innerText: COLOR_DISP[i],
+                })
+                SL_OPS.give.appendChild(opt)
+
+                for (var j = i + 1; j < 4; j++) {
+                    var opt = document.createElement('option')
+                    Object.assign(opt, {
+                        value: COLORS[i] + COLORS[j],
+                        innerText: `${COLOR_DISP[i]}/${COLOR_DISP[j]}`
+                    })
+                    SL_OPS.types.appendChild(opt)
+                }
+            }
+            SL_OPS.return.innerHTML = SL_OPS.give.innerHTML
+
+            BTN_UPDATE.addEventListener('click', () => {
+                var newHand =
+                    (OPS.from == 0) ? CURR_ACTIONS[0].execPlr1(HAND_CARDS) :
+                        (OPS.to == 0) ? CURR_ACTIONS[0].execPlr2(HAND_CARDS) :
+                            Cards(HAND_CARDS)
+                var newPossibs = PossibWithActions(CURR_ACTIONS, OPS.from, OPS.to, ALL_POSSIB)
+
+                UNDO_STACK.push([HAND_CARDS, ALL_POSSIB])
+                HAND_CARDS = newHand
+                ALL_POSSIB = newPossibs
+
+                UpdatePossibDisplays(false)
+                OPS.from = (OPS.from * 1 + 1) % PLAYER_COUNT
+                UpdateOpUI()
+            })
+
+            BTN_UNDO.addEventListener('click', () => {
+                [HAND_CARDS, ALL_POSSIB] = UNDO_STACK.pop()
+                UpdatePossibDisplays()
+            })
+
+            function UpdatePossibDisplays(updateUI = true) {
+                // 可能性种类
+                DISP_POSSIB_COUNT.innerText = ALL_POSSIB.length
+
+                // 预测结果
+                DISP_PREDICT.innerHTML = SummaryPossibs(ALL_POSSIB)
+
+                // 预测手牌
+                if (!PREDICT_HANDS) {
+                    PREDICT_HANDS = []
+                    for (var i = 1; i < PLAYER_COUNT; i++)
+                        PREDICT_HANDS.push(new PlayerPredict(DISP_HANDS, i))
+                }
+                for (var plr of PREDICT_HANDS)
+                    plr.updateContent()
+
+                if (updateUI)
+                    UpdateOpUI()
+            }
+
+            function UpdateOpUI() {
+                // 输入验证
+                ValidateSelect(SL_OPS.from, v => v < PLAYER_COUNT)
+                ValidateSelect(SL_OPS.to, v => v < PLAYER_COUNT && v != OPS.from)
+                ValidateSelect(SL_OPS.give, v => OPS.types.indexOf(v) >= 0)
+                ValidateSelect(SL_OPS.return, v => OPS.types.indexOf(v) >= 0)
+                SL_OPS.count.max = (
+                    OPS.action == 'loot_pair' ? 2 :
+                        Math.max(...Array.from(OPS.types).map(x => MAX_COUNTS[x]))
+                )
+                DISP_CARDS_COUNT.innerText = OPS.count
+
+                // 颜色可见性
+                var about_me = (OPS.from == '0' || OPS.to == '0')
+                var give_known = about_me && (OPS.action == 'ask' || OPS.action == 'exchange')
+                var return_known = about_me && (
+                    OPS.action == 'loot_type' ||
+                    (OPS.action == 'loot_pair' && OPS.count == 1)
+                )
+
+                // 更新动作分支 & 执行按钮可用性
+                var color1 = give_known ? OPS.give : null,
+                    color2 = return_known ? OPS.return : null
+                CURR_ACTIONS = GenValidActions(OPS.from, OPS.to, OPS.action, OPS.types, OPS.count, color1, color2)
+
+                // 更新控件显示
+                {
+                    SetActive(AREA_GIVE, give_known)
+                    SetActive(SL_OPS.return, return_known)
+                    DISP_GIVE.innerText = OPS.from == '0' ? '给出' : '获得'
+                    DISP_RETURN.innerText =
+                        OPS.action == 'ask' ? '报出' :
+                            OPS.to == '0' ? '给出' : '获得'
+                    DISP_MY_CARDS.innerHTML = HAND_CARDS.HTML
+                    BTN_UPDATE.disabled = CURR_ACTIONS.length == 0
+                    BTN_UNDO.disabled = UNDO_STACK.length == 0
+                }
+            }
+        </script>
+    </div>
+
+</body>
+
+</html>
